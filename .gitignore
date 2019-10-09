@@ -1,0 +1,9 @@
+# Ignore everything
+*
+
+# And here start to whitelist
+# markdown notes
+!*.md
+
+# Files:
+!*.c
