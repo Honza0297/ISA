@@ -6,5 +6,5 @@
 !*.md
 
 # Files:
-CMakeLists.txt
+!CMakeLists.txt
 !*.c
