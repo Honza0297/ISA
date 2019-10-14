@@ -10,6 +10,7 @@
 #include <netinet/udp.h>
 #include <netinet/ip_icmp.h>
 #include <pcap.h>
+#include <errno.h>
 
 #define DEFAULT_PORT 53
 #define MAX_UDP_SEND 1
@@ -26,6 +27,41 @@ typedef struct {
     int reverse; // -x
     int aaa; // -6
 } Input_args;
+
+typedef struct  {
+    unsigned short ID; // unsigned short == :16
+
+    char is_query :1;
+    char opcode :4; // 0 = standard query
+    char authoritative_answer :1; // in query it is zero
+    char truncated :1; // in query it is zero
+    char recursion_desired :1;
+    char recursion_available :1; //0
+    char future :3; // zero
+    char  response_code :4; // 0 = no err, 1 = format err, 2 = server err, 3 = name err (domain name does not exist), 4 = type of query not implemented, 5 = refused; 0 in query
+
+    unsigned short qcount; // number of entries in question section, should be 1
+    unsigned short ancount; // number of resource records in answer; 0 in query
+    unsigned short nscount; // number of name server resource record; 0 in query
+    unsigned short addcount; // number of resource records in additional record section, in query = 0
+
+} DNS_header;
+
+typedef struct {
+  //QNAME???
+    unsigned short qtype;
+    unsigned short qclass;
+} DNS_query;
+
+typedef struct {
+    //NAME?
+    unsigned short type; //type of record in RDATA in "two octets" format 0x0001 = A, 0x0005 = CNAME and more
+    unsigned short class; //type of class in  RDATA, (0x0001 - internet adddres)
+    unsigned int ttl; //BEWARE, I suppose 4-byte int
+    unsigned  short data_lenght; //lenght of RDATA
+    //RDATA????
+} DNS_answer;
+
 //Tato funkce neni mym dilem. Pro podrobnější informace si prosím prohlédněte dokumentaci.
 uint16_t udp_checksum(const void *buff, size_t len, in_addr_t src_addr, in_addr_t dest_addr)
 {
@@ -314,31 +350,50 @@ int main(int argc, char** argv )
     int one = 1;
     //setting socket
 
-    int sock = socket(PF_INET, SOCK_RAW, IPPROTO_UDP);
+    int sock = socket(PF_INET, SOCK_DGRAM /*SOCK_RAW*/, IPPROTO_UDP);
     if(sock < 0)
     {
-
+        printf("ERRNO: %s", strerror(errno));
         exit(48);
     }
 
-    int recvsock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    /*int recvsock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if(recvsock < 0)
     {
         exit(49);
-    }
+    }*/
     if(setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
     {
         perror("setsockopt() error");
         exit(-1);
     }
 
+    //TODO comment this
     struct sockaddr_in sendto_addr;
-    sendto_addr.sin_addr.s_addr = inet_addr(dst_addr); //dst address
     sendto_addr.sin_family = AF_INET;
-    sendto_addr.sin_port = htons(46666); //UDP_port from which i send packets
+    sendto_addr.sin_addr.s_addr = inet_addr(dst_addr); //dst address
+    sendto_addr.sin_port = htons(input_args.port);
 
+    DNS_header dns;
+    dns.ID = 0; //TODO pouzit neco podle ceho identifikuju paket
+    dns.is_query = 0; // query yes
+    dns.opcode = 0;
+    dns.authoritative_answer = 0;
+    dns.truncated = 0; //not truncated
+    dns.recursion_desired = input_args.recursion ? 1 : 0; //recursion according to input args (1 yes; 0 no)
+    dns.recursion_available = 0;
+    dns.future = 0; // if this would be the future, the project should be already done... :(
+    dns.response_code = 0;
+    dns.qcount = htons(1); //only one question
+    dns.addcount = 0;
+    dns.ancount = 0;
+    dns.nscount = 0;
+
+    DNS_query query;
+    query.qtype = htons(1); //1 means A, TODO AAA types etc
+    query.qclass = htons(1); // because... internet?
     //prepare PCAP
-    char rule[15] = "ip proto \\icmp"; //TODO WTF KURVA IS THIS???
+    char rule[15] = "ip proto \\udp"; //TODO WTF KURVA IS THIS??? mozna doplnit port?
     set_pcap_handle(interface_name, rule);
 
     //structures needed by PCAP
@@ -390,3 +445,4 @@ int main(int argc, char** argv )
 
     return 0;
 }
+
