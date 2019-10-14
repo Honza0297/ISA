@@ -9,13 +9,12 @@
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 #include <netinet/ip_icmp.h>
-#include <pcap.h>
 #include <errno.h>
 
 #define DEFAULT_PORT 53
 #define MAX_UDP_SEND 1
 int err = 0;
-pcap_t *pcap_handle;
+
 #define ERR_ARGS -1
 #define ERR_FILE -2
 
@@ -276,40 +275,6 @@ void set_ip_header(struct ip *ip_header, char *src_addr, char *dst_addr, int siz
     ip_header->ip_dst.s_addr = inet_addr(dst_addr);
     ip_header->ip_sum = csum((unsigned short *)ip_header, size);
 }
-
-void set_pcap_handle(char * interface_name,char *rule)
-{
-    char errbuf[PCAP_ERRBUF_SIZE];
-    pcap_handle = pcap_open_live(interface_name, 65500, 0, 100, errbuf);
-    if(pcap_handle == NULL)
-    {
-        printf("ERR during creating pcap_handle");
-        exit(45);
-    }
-    bpf_u_int32 pcap_mask;
-    bpf_u_int32 pcap_net;
-    pcap_lookupnet(interface_name, &pcap_net, &pcap_mask, errbuf);
-
-    struct bpf_program *filter = (struct bpf_program *)malloc(sizeof(struct bpf_program));;
-    pcap_compile(pcap_handle ,filter, rule, 0, pcap_net);
-    if(err)
-    {
-        printf("err during pcap compile. %d", err);
-        exit(46);
-    }
-    err = pcap_setfilter(pcap_handle,filter);
-    if(err == -1)
-    {
-        printf("err during pcap set filter.");
-        exit(47);
-    }
-}
-
-void stop_pcap(int signal_number)
-{
-    pcap_breakloop(pcap_handle);
-}
-
 int main(int argc, char** argv )
 {
     Input_args input_args = check_args(argc,argv);
@@ -362,11 +327,11 @@ int main(int argc, char** argv )
     {
         exit(49);
     }*/
-    if(setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
+   /* if(setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
     {
         perror("setsockopt() error");
         exit(-1);
-    }
+    }*/
 
     //TODO comment this
     struct sockaddr_in sendto_addr;
@@ -394,10 +359,9 @@ int main(int argc, char** argv )
     query.qclass = htons(1); // because... internet?
     //prepare PCAP
     char rule[15] = "ip proto \\udp"; //TODO WTF KURVA IS THIS??? mozna doplnit port?
-    set_pcap_handle(interface_name, rule);
 
-    //structures needed by PCAP
-    struct pcap_pkthdr *header = (struct pcap_pkthdr *)malloc(sizeof(struct pcap_pkthdr));
+
+
     const  u_char *arrived_packet;
 
     if(sendto(sock, datagram, sizeof(datagram), 0, (struct sockaddr *)&sendto_addr, sizeof(sendto_addr)) < 0)
@@ -408,9 +372,6 @@ int main(int argc, char** argv )
     int repeat = 0; //counter of repeated scan tries.
     while(42)
     {
-        alarm(1);
-        signal(SIGALRM, stop_pcap);
-        arrived_packet = pcap_next(pcap_handle, header);
         if(arrived_packet)
         {
             struct ip*sniffed_ip = (struct ip*)(arrived_packet + 14); //14 == sizeof(sniff_eth)
@@ -441,7 +402,6 @@ int main(int argc, char** argv )
             }
         }
     }//end of while 42
-    pcap_close(pcap_handle);
 
     return 0;
 }
