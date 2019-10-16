@@ -8,3 +8,4 @@
 # Files:
 !CMakeLists.txt
 !*.c
+!*.h
