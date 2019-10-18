@@ -10,7 +10,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-
+#include <sys/time.h>
 #include "structures.h"
 
 #define DEFAULT_PORT 53
@@ -18,6 +18,7 @@
 #define AAAA 28
 #define CNAME 5
 #define NS 2
+#define PTR 12
 
 #define IPv4 0
 #define DOMNAME  1
@@ -35,6 +36,8 @@
 #define RC_NOT_IMPLEMENTED 4
 #define REFUSED 5
 
+//timeout
+struct timeval timeout={1,0};
 
 void process_error(int return_code, char * err_string)
 {
@@ -89,7 +92,6 @@ Input_args check_args(int argc, char** argv)
 
 int find_nameserver_string_prefix(const char *str)
 {
-    //todo test delky stringu
     char nameserver[] = "nameserver";
     int lenght = 10;
     int found = 0;
@@ -122,7 +124,6 @@ char* get_dst_addr()
     {
         if(find_nameserver_string_prefix(line))
         {
-            //TODO tady resit v4 vs v6 - udelat funkce isv4 isv6 nebo tak...
             for(int i = 0; i < 15; i++)
             {
                 if(line[i+11] == '\n' || line[i+10] == EOF)
@@ -199,7 +200,7 @@ void remove_numbers_from_hostname(unsigned char *hostname, unsigned char *new_ho
 }
 
 
-//TODO TOTO NENI MOJE, UPRAV TO!
+//TODO TOTO NENI MOJE
 u_char* ReadName(unsigned char* reader,unsigned char* buffer,int* count)
 {
     unsigned char *name;
@@ -266,13 +267,15 @@ char *get_type_descriptor(unsigned short type) {
             return "CNAME";
         case NS:
             return "NS";
+        case PTR:
+            return "PTR";
         default:
             return "Not a standard type";
     }
 }
 
 char *get_class_string(unsigned short dns_class) {
-    return ntohs(dns_class) == 1 ? "IN" : "not-IN"; //TODO pridat podporu? nitpick
+    return ntohs(dns_class) == 1 ? "IN" : "not-IN";
 }
 
 void print_help()
@@ -363,7 +366,7 @@ void get_interface_name(char *interface)
 
 void set_DNS_header(Input_args input_args, DNS_header *dns)
 {
-    dns->ID = htons(666); //TODO pouzit neco podle ceho identifikuju paket
+    dns->ID = htons(666);
     dns->is_query = 0; // query yes
     dns->opcode = 0;
     dns->authoritative_answer = 0;
@@ -435,7 +438,7 @@ void ask_for_dns_ip(Input_args *input_args)
     add_numbers_to_hostname((unsigned char *)input_args->server, qname);
 
     DNS_query *query = (DNS_query *) &datagram[sizeof(DNS_header)+(strlen((const  char *)qname) +1)];
-    query->qtype = htons(A); //1 means A, TODO AAA types etc
+    query->qtype = htons(A);
     query->qclass = htons(1); // 1 means "internet". Just do it.
 
     if(sendto(sock, datagram, sizeof(DNS_header) + (strlen((const char*)qname)+1) + sizeof(DNS_query), 0, (struct sockaddr *)&where_to_send, sizeof(where_to_send)) < 0)
@@ -450,7 +453,8 @@ void ask_for_dns_ip(Input_args *input_args)
         datagram[i] = '\0';
     }
 
-    if(recvfrom (sock,(char*)datagram , udp_packet_size , 0 , (struct sockaddr*)&where_to_send , (socklen_t*)&size) < 0) //todo timeout?
+    setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,(char*)&timeout,sizeof(struct timeval));
+    if(recvfrom (sock,(char*)datagram , udp_packet_size , 0 , (struct sockaddr*)&where_to_send , (socklen_t*)&size) < 0)
     {
         process_error(ERR_SOCKET, strerror(errno));
     }
@@ -466,7 +470,7 @@ void ask_for_dns_ip(Input_args *input_args)
     unsigned char *reader_head = (unsigned char *)&datagram[sizeof(DNS_header) + (strlen((const char*)qname)+1)];
     reader_head += + sizeof(DNS_query);
 
-//TODO odsud jen kopcim!!!
+
     DNS_Answer answers[dns->ancount];
     int relative_index = 0; //relative index into reader head;
 
@@ -479,10 +483,10 @@ void ask_for_dns_ip(Input_args *input_args)
         answers[i].info = (DNS_R_DATA_INFO *) reader_head;
         reader_head += sizeof(DNS_R_DATA_INFO);
 
-        int IP_type =  ntohs(answers[i].info->type); //TODO rename
+        int IP_type =  ntohs(answers[i].info->type);
         int data_len = ntohs(answers[i].info->rdata_len);
 
-        if(IP_type == 1) //TODO 1 nahradit za vhodné macro, jinak to znamená "pokud ipv4"
+        if(IP_type == A)
         {
             answers[i].response_data = (unsigned char *)malloc(sizeof(unsigned  char) * data_len);
             for(int j = 0; j < data_len; j++)
@@ -530,91 +534,108 @@ void print_answer(DNS_Answer *record, int is_answer)
     printf("\n");
 }
 
+
+
 int main(int argc, char** argv )
 {
 
+    //Get input arguments and maybe help the user
     Input_args input_args = check_args(argc,argv);
-
     if(input_args.help)
     {
         print_help();
         return 0;
     }
 
-    //check if server is DN or IP
-    //TODO IPv6
-    char * dst_addr;
+    //Prepare IP of server where we will send query
     if(check_server(input_args.server) == NOT_AN_IP)
     {
         ask_for_dns_ip(&input_args);
     }
+    char * dst_addr = input_args.server; //address of nameserver where to send queries
 
-    dst_addr = input_args.server; //address of nameserver where to send queries
-
-
-    char interface_name[16]; //Max interface name len according to
+    //Get the most suitable interface - in get_interface name, there is more info
+    char interface_name[16];
     get_interface_name(interface_name); //used interface is that interface, which received the most packets
 
+    //Prepare port
     int *UDP_port = &input_args.port;
     char * string_UDP_port = malloc(sizeof(char)*5); //max port number = 65535
     sprintf(string_UDP_port, "%d", *UDP_port);
 
-
+    //prepare datagram buffer
     int udp_packet_size = 655;
     char datagram[udp_packet_size];
     memset (datagram, 0, udp_packet_size);
-    //setting socket
 
-    int sock = socket(PF_INET, SOCK_DGRAM /*SOCK_RAW*/, IPPROTO_UDP);
+    //Set socket
+    int sock = socket(AF_INET, SOCK_DGRAM , IPPROTO_UDP);
     if(sock < 0)
     {
         process_error(ERR_SOCKET, strerror(errno));
     }
 
-
-
-    //TODO comment this
     struct sockaddr_in where_to_send;
     set_socket_address(AF_INET, inet_addr(dst_addr),htons(input_args.port), &where_to_send);
+
     DNS_header *dns = (DNS_header *)&datagram;
     set_DNS_header(input_args, dns);
 
 
+    /*
+     * TODO reverse principle:
+     * given ip(v4): ODO reverse principle: 85.207.58.49
+     * convert to 49.58.207.85.in-addr.arpa. (add dots -> numbers)
+     * send with appropiate type (PTR (=12))
+     * when recving answer, change conversion - now converting as IP, which will not work.
+     */
+
+    //Prepare query
     unsigned char *qname = (unsigned char *)&datagram[sizeof(DNS_header)];
     add_numbers_to_hostname((unsigned char*)input_args.address, qname);
     DNS_query *query = (DNS_query *) &datagram[sizeof(DNS_header)+(strlen((const  char *)qname) +1)];
-    query->qtype = htons(A); //1 means A, TODO AAA types etc
+    query->qtype = input_args.reverse ? htons(PTR): htons(A); // TODO AAA type
     query->qclass = htons(1); // 1 means "internet". Just do it.
 
+    //And send it ^_^
     if(sendto(sock, datagram, sizeof(DNS_header) + (strlen((const char*)qname)+1) + sizeof(DNS_query), 0, (struct sockaddr *)&where_to_send, sizeof(where_to_send)) < 0)
-    {
-        perror("sendto err\n");
-    }
-    int size = sizeof(where_to_send);
-
-
-
-    for(int i = 0; i < udp_packet_size; i++)
-    {
-        datagram[i] = '\0';
-    }
-
-    if(recvfrom (sock,(char*)datagram , udp_packet_size , 0 , (struct sockaddr*)&where_to_send , (socklen_t*)&size) < 0) //todo timeout?
     {
         process_error(ERR_SOCKET, strerror(errno));
     }
 
 
+
+    //Clear buffer before recv
+    for(int i = 0; i < udp_packet_size; i++)
+    {
+        datagram[i] = '\0';
+    }
+
+    //Receive
+    int size = sizeof(where_to_send);
+    setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,(char*)&timeout,sizeof(struct timeval));
+    if(recvfrom (sock,(char*)datagram , udp_packet_size , 0 , (struct sockaddr*)&where_to_send , (socklen_t*)&size) < 0)
+    {
+        process_error(ERR_SOCKET, strerror(errno));
+    }
+
+    //Load dns header
     dns = (DNS_header*)datagram;
 
+    //If there is any response code, it means error. App will terminate with the same code
     if(dns->response_code)
     {
-        process_error((int)dns->response_code,server_error_message((int)dns->response_code) );
+        process_error((int)dns->response_code,server_error_message((int)dns->response_code));
     }
+
+    //Start to print info - general
     printf("Authoritative: %s, Recursive: %s, Truncated: %s\n", dns->authoritative_answer ? "Yes " : "No",dns->recursion_desired? "Yes" : "No",dns->truncated ? "Yes" : "No");
 
+    //Set reader head
     unsigned char *reader_head = (unsigned char *)&datagram[sizeof(DNS_header) + (strlen((const char*)qname)+1)];
     DNS_query *received_question = (DNS_query *)reader_head;
+
+
     //SECTION printing question info
     printf("Question section (%d):\n", ntohs(dns->qcount));
     for(int i = 0; i < ntohs(dns->qcount);i++)
@@ -629,7 +650,6 @@ int main(int argc, char** argv )
     DNS_Answer answers;
     int relative_index = 0; //relative index into reader head;
     printf("Answer Section (%d)\n" , ntohs(dns->ancount));
-    //Start parsing answers
     for(int i = 0; i < ntohs(dns->ancount); i++)
     {
         answers.name = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
@@ -638,10 +658,10 @@ int main(int argc, char** argv )
         answers.info = (DNS_R_DATA_INFO *) reader_head;
         reader_head += sizeof(DNS_R_DATA_INFO);
 
-        int IP_type =  ntohs(answers.info->type); //TODO rename
+        int IP_type =  ntohs(answers.info->type);
         int data_len = ntohs(answers.info->rdata_len);
 
-        if(IP_type == 1) //TODO 1 nahradit za vhodné macro, jinak to znamená "pokud ipv4"
+        if(IP_type == A)
         {
             answers.response_data = (unsigned char *)malloc(sizeof(unsigned  char) * data_len);
             for(int j = 0; j < data_len; j++)
@@ -674,9 +694,15 @@ int main(int argc, char** argv )
         authoritatives[i].response_data = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
         reader_head +=relative_index;
     }
+    //print authorities
+    printf("Authoritive Records (%d):\n" , ntohs(dns->nscount));
+    for( int i=0 ; i < ntohs(dns->nscount) ; i++)
+    {
+        print_answer(&authoritatives[i], 1);
+    }
+
 
     DNS_Answer additionals[dns->addcount];
-
     for(int i = 0; i < ntohs(dns->addcount); i++)
     {
        additionals[i].name = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
@@ -705,22 +731,18 @@ int main(int argc, char** argv )
             reader_head +=relative_index;
         }
     }
-
-
-    //print authorities
-    printf("Authoritive Records (%d):\n" , ntohs(dns->nscount));
-    for( int i=0 ; i < ntohs(dns->nscount) ; i++)
-    {
-        print_answer(&authoritatives[i], 1);
-    }
-
-    //print additional resource records
+        //print additional resource records
     printf("Additional Records (%d):\n" , ntohs(dns->addcount));
     for( int i=0; i < ntohs(dns->addcount) ; i++)
     {
         print_answer(&additionals[i], 1);
     }
+
+
+
     return 0;
 }
 
-
+//Co neumim a umet nebudu:
+//IPv6 v serveru
+//iterativní DNS
