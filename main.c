@@ -530,11 +530,58 @@ void print_answer(DNS_Answer *record, int is_answer)
             inet_ntop(AF_INET6, record->response_data, buffer, 99);
             printf("%s",buffer);
         }
+        if(type == PTR)
+        {
+            printf("%s", record->response_data);
+        }
     }
     printf("\n");
 }
 
+/*
+    * TODO reverse principle:
+    * given ip(v4): 85.207.58.49
+    * convert to 49.58.207.85.in-addr.arpa. (add dots -> numbers)
+    * send with appropiate type (PTR (=12))
+    * when recving answer, change conversion - now converting as IP, which will not work.
+    */
+void prepare_for_reverse(char *address) {
+    char temp[strlen(address)+14];
+    char *inet_arpa = ".in-addr.arpa\0";
+    int stops[5];
+    stops[0] = -1;
+    stops[4] = (int)strlen(address);
+    int tempindex=1;
+    //find dots
+    for(int i = 0; i < (int)strlen(address); i++)
+    {
+        if(address[i] == '.')
+        {
+            stops[tempindex] = i;
+            tempindex++;
+        }
+    }
 
+    tempindex = 0;
+    for(int i = 0; i < 4; i++)
+    {
+        for(int j = stops[5-2-i]+1; j < stops[5-1-i]; j++)
+        {
+            temp[tempindex++] = address[j];
+        }
+        temp[tempindex++] = '.';
+    }
+    for(int i = (int)strlen(address); i < (int)strlen(address)+14; i++)
+    {
+        temp[i] = inet_arpa[i-(int)strlen(address)];
+    }
+    int i;
+    for(i = 0; i < (int)strlen(temp); i++)
+    {
+        address[i] = temp[i];
+    }
+    address[i] = '\0';
+}
 
 int main(int argc, char** argv )
 {
@@ -553,6 +600,14 @@ int main(int argc, char** argv )
         ask_for_dns_ip(&input_args);
     }
     char * dst_addr = input_args.server; //address of nameserver where to send queries
+
+
+
+    //Make stuff for reverse query
+    if(input_args.reverse)
+    {
+       prepare_for_reverse(input_args.address);
+    }
 
     //Get the most suitable interface - in get_interface name, there is more info
     char interface_name[16];
@@ -580,15 +635,6 @@ int main(int argc, char** argv )
 
     DNS_header *dns = (DNS_header *)&datagram;
     set_DNS_header(input_args, dns);
-
-
-    /*
-     * TODO reverse principle:
-     * given ip(v4): ODO reverse principle: 85.207.58.49
-     * convert to 49.58.207.85.in-addr.arpa. (add dots -> numbers)
-     * send with appropiate type (PTR (=12))
-     * when recving answer, change conversion - now converting as IP, which will not work.
-     */
 
     //Prepare query
     unsigned char *qname = (unsigned char *)&datagram[sizeof(DNS_header)];
