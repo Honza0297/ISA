@@ -1,0 +1,104 @@
+\documentclass[a4paper, 11pt]{article}
+
+\usepackage[czech]{babel}
+\usepackage{times}
+\usepackage[text={17cm,24cm}, top=2cm, left=2cm, right=2cm, bottom=3cm]{geometry}
+\usepackage[utf8]{inputenc}
+\setlength{\headheight}{20.0mm}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\usepackage{graphics}
+\usepackage {array}
+\usepackage{pdflscape}
+\usepackage[czech, ruled, vlined, linesnumbered, longend, noline]{algorithm2e}
+\usepackage{multirow}
+
+
+\begin{document}
+\catcode`\-=12 %Mělo by to vyřešit problém s cline... jestli ne, tak už nevím
+%Uvodni strana
+\begin{titlepage}
+	\begin{center}
+		\Huge \textsc{Vysoké učení technické v~Brně}\\
+		\huge \textsc{Fakulta informačních technologií}\\
+		\vspace{\stretch{0,190}}
+		\begin{figure}[h]
+		\begin{center}
+		\scalebox{0.85}{\includegraphics{logo.png}}
+		\end{center}
+		\end{figure}
+
+		\vspace{\stretch{0,190}}
+		\LARGE Projekt do předmětu ISA \\
+		\Huge {Jednoduchý DNS resolver}\\
+		\vspace{\stretch{0,620}}
+		
+		
+		\Large Beran Jan \texttt{xberan43} \hspace{\stretch{0,5}} \Large\today\\
+	 \end{center}
+\end{titlepage}
+\tableofcontents
+
+\newpage
+\section{Úvod a zadání projektu}
+Zadáním projektu bylo vytvořit jednoduchý DNS resolver.  \\
+Na vstupu programu se očekává adresa DNS serveru, kam zasílat dotazy (IP nebo doménové jméno) a dotazovaná adresa (opět IP nebo doménové jméno). Dále proram umožňuje specifikovat port, typ dotazu (A nebo AAAA), rekurzi na straně DNS serveru a reverzní dotazování (při zadání adresy jako IP).  \\
+Na výstupu se očekávají základní informace o dotazu a dále vypsané jednotlivé části odpovědi (název, typ, třída, ttl a data).
+
+\section{Teorie}
+V této části stručně vysvětlím nastudovanou problematiku DNS dotazování a lehce nastíním způsob, jakým jsem vytvořil svůj projekt. Při studiu teorie jsem čerpal z následujícíh zdrojů:\cite{Matousek:SAR}, \cite{DNS-notes}.
+\subsection{Důvod k zavedení DNS}
+Jednotlivé stanice připojené k internetu jsou jednoznačně adresovány pomocí IP adres, ovšem běžní uživatelé místo nich používají textové reprezentace – doménová jména. Z toho plynoucí nutnost převodu mezi těmito dvěma způsoby adresace byla původně řešena jediným souborem na každé stanici \footnote{\texttt{/etc/hosts} na unixových systémech, stále používaný, ale nikoli hlavní způsob, jak převádět IP na doménová jména a naopak.}. Tento systém se ovšem ukázal jako nevhodný (složitá a pomalá aktualizace atd.), proto byl v roce 1983 nahrazen systémem doménových jmen - DNS. \\
+\subsection{Princip DNS}
+\uv{Lidsky zapamatovatelná} podoba jména je rozdělena na několik částí oddělených tečkami (například www.google.com). Jednotlivé části adresy se nazávají doménová jména n-té úrovně, přičemž doména nejvyšší úrovně (TLD, Top-Level-Domain) leží vpravo a má největší význam.\\
+Informace o doménách jsou poté uloženy na tzv. jmenných serverech (DNS serverech, nameserverech, doménových serverech). Tyto informace přitom můžou být dvojího druhu: přímo IP adresa, která odpovídá danému jménu, nebo odkaz na další jmenný server, který odpovídá následující doméně. Tím je docíleno efektivní hierarchie.\\
+\subsection{DNS dotazování}
+DNS dotazování poté probíhá tak, že je dotaz odeslán na lokální DNS server. V tuto chvíli může nastat několik možností: server buď zná IP adresu pro dané jméno a tu vrátí tazateli, nebo zná pouze další server v hierarchii, kam dotaz směřovat. V závislosti na typu dotazu (zda je od tazatele vyžadována rekurze), je buď dotaz přímo předán dál nebo je tazateli vrácena informace o dalším serveru v pořadí.\\
+\subsection{Reverzní dotazování}
+Systém doménových jmen funguje i obráceně – převádí IP adresy na doménová jména. Zde je důležité si uvědomit, že části IP adresy jsou řazeny podle opačného klíče než u doménových jmen; Úplně vpraco se nachází adresa stanice v (pod)síti, vlevo adresa sítě.\\
+Při DNS dotazování se tedy v dotazu neuvádí přímo původní IP adresa (např. 12.34.465.7), ale její upravená verze s koncovkou \texttt{in-addr.arpa}(7.465.34.12.in-addr.arpa). Na takto upravenou adresu se již dotazuje standardním způsobem. 
+
+\section{Implementace}
+Na základě výše uvedené teorie a zadání jsem vytvořil jednoduchý DNS resolver, který pracuje s následujícími parametry: 
+\begin{itemize}
+	\item -s server: Povinny argument, který specifikuje DNS server, použitá při dotazování
+	\item address: adresa, která bude dotazovaná (doménové jméno nebo IP adresa) 
+	\item -p port: Volitelný parametr, specifikuje port, kam odesílat dotazy. Standardní port je 53
+	\item -x: Volitelný parametr, specifikuje, že se bude provádět reverzní dotazování.
+	\item -r: Volitelný parametr, specifikuje, že s ebude provádět rekurzivní dotazování na straně DNS serveru (program sám vypisuje pouze první přijatou odpověď a v případě, že není tento parametr specifikován, program neprovádí iterativní dotazování ve vlastní režii).
+	\item -6: Volitelný parametr, specifikuje použití dotazu typu AAAA místo standardnho A
+\end{itemize}
+Kromě těchto parametrů program zvládá i parametr -h, který vypíše základní informace a použití programu a ukončí program. \\
+
+Při implemetaci jsem vycházel ze svých předešlých projektů, především kódu k druhému projektu do předmětu IPK (parsování paketů a UDP komunikace), na kterém jem také začal stavět. V průběhu implementace ovšem došlo k téměř kompletnímu přepsání. \\
+
+Samotná implementace probíhala v iteracích, kde každá iterace měla nějaký cíl a důvod:
+ \begin{enumerate}
+    \item Analýza vstupních argumentů, ošetření chybných vstupů.
+     \item Odesílání paketů (byť nesmyslných) \footnote{Tento na první pohled nelogický krok má svůj důvod. Odeslaný pakety jsou zaznamenávány programem Wireshark, který je umí zpětně analyzovat a tím pomáhat v budoucích krocích s případnou opravou chyb.}
+     \item Vytvoření korektní DNS hlavičky
+     \item Vytvoření korektního DNS dotazu
+     \item Zachytávání odpovědi
+     \item Její analýza a výpis
+     \item Refaktorizace kódu z předchozích bodů
+ \end{enumerate}
+
+\subsection{Testování}
+Program byl primárně testován ručně pomocí integrovaného vývojového prostředí Clion a jeho \uv{Debug mode}, kde jsem krokoval program a kontroloval správný tok dat a předávání řízení. V pozdějších fázích projektu jsem vytvořil i velmi jednoduchý skript v jazyce Python 3, který testoval základní testovací scénáře pro správný i nesprávný vstup.\\
+Pro kontrolu komunikace s DNS serverem jsem také používal program Wireshark.\\
+Dále jsem použil příkazovou utilitu dig, která mi pomáhala validovat výstup mého programu. \\
+
+\subsection {Přejaté části kódu}
+Při tvorbě projektu jsem narazil na problém při čtení některých částí odpovědi. Pro tyto účely jsem přejal funkcni ReadName() z \cite{ReadName}. Tato funkce tedy není mým dílem, jak je uvedeno i ve zdrojovém kódu. \\
+
+\subsection{Nedokončené a nefunkční části projektu}
+Projekt bohužel nezvládá zasílat dotazy typu AAAA. Zároveň také nepodporuje zadání DNS serveru pomocí IPv6 adresy.
+
+\section{Závěr}
+Nejprve proběhlo studium problematiky (zasílání DNS dotazů, programování DNS dotazů v jazyce C...), poté vlastní implementace. Výsledkem je projekt, který částečně splňuje zadání (nesplněné body zadání se dají najít v závěru předchozí sekce). 
+\newpage % Použité zdroje
+\bibliographystyle{czechiso}
+\def\refname{Použité zdroje}
+\bibliography{citaceISA}
+ 
+\end{document}
