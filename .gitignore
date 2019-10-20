@@ -13,4 +13,4 @@
 !CMakeLists.txt
 !*.c
 !*.h
-
+!*.py
