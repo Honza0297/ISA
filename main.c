@@ -1,8 +1,15 @@
+/*
+ * Simple DNS resolver
+ * @Author: Jan Beran (xberan43)
+ */
+
+//Generic includes
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 
+//Internet specific
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -10,26 +17,32 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include <sys/time.h>
+//Other
+#include <sys/time.h> // for timeout
 #include "structures.h"
 
 #define DEFAULT_PORT 53
+
+//DNS types
 #define A 1
 #define AAAA 28
 #define CNAME 5
 #define NS 2
 #define PTR 12
 
+//DNS classes
 #define IPv4 0
 #define DOMNAME  1
 #define IPv6 2
 #define NOT_AN_IP -1
 
+//ERR codes
 #define NOT_IMPLEMENTED 90
 #define ERR_ARGS -1
 #define ERR_FILE -2
 #define ERR_SOCKET -3
 
+//DNS server return codes
 #define FORMAT_ERR 1
 #define SERVER_FAIL 2
 #define NAME_ERR 3
@@ -39,6 +52,10 @@
 //timeout
 struct timeval timeout={1,0};
 
+
+/*
+ * Simple function which process error
+ */
 void process_error(int return_code, char * err_string)
 {
     fprintf(stderr, "Something has happened, the program will be terminated. Error message is shown below: \n");
@@ -46,6 +63,10 @@ void process_error(int return_code, char * err_string)
     exit(return_code);
 }
 
+
+/*
+ * Function gets input arguemnts, parse them and return them in Inpu_args structure
+ */
 Input_args check_args(int argc, char** argv)
 {
     int opt;
@@ -85,11 +106,14 @@ Input_args check_args(int argc, char** argv)
 
     if(!(input_args.server) || !(input_args.address))
     {
-     process_error(ERR_ARGS, strerror(errno));
+     process_error(ERR_ARGS, "Bad arguments,  you can run ./dns -h for help.");
     }
     return input_args;
 }
 
+/*
+ * Function searches for "nameserver" prefix on the line. Returns 1 if found, 0 if not
+ */
 int find_nameserver_string_prefix(const char *str)
 {
     char nameserver[] = "nameserver";
@@ -107,6 +131,9 @@ int find_nameserver_string_prefix(const char *str)
     return found;
 }
 
+/*
+ * Function gets ip addres of first nameserver in /etc/resolv.conf and returns it
+ */
 char* get_dst_addr()
 {
     FILE *resolv_file = fopen( "/etc/resolv.conf", "r" );
@@ -146,6 +173,9 @@ char* get_dst_addr()
     return ip;
 }
 
+/*
+ * Function convert domain name like www.google.com to 3www6google3com for DNS querry needs
+ */
 void  add_numbers_to_hostname(unsigned char* hostname, unsigned char *dest_str)
 {
     unsigned char buffer[64]; //max lenght of part of domain name separated by dots
@@ -183,6 +213,9 @@ void  add_numbers_to_hostname(unsigned char* hostname, unsigned char *dest_str)
     dest_str[dest_end] = '\0';
 }
 
+/*
+ * Opposite function to the previous one. Converts 3www6google3com to www.google.com
+ */
 void remove_numbers_from_hostname(unsigned char *hostname, unsigned char *new_hostname)
 {
     for(int i = 0; i < (int)strlen((const char *)hostname); i++)
@@ -200,7 +233,11 @@ void remove_numbers_from_hostname(unsigned char *hostname, unsigned char *new_ho
 }
 
 
-//TODO TOTO NENI MOJE
+/*
+ * Function for reading parts of received DNS packet
+ * NOTE: This function is NOT created by me.
+ * Source: https://gist.github.com/fffaraz/9d9170b57791c28ccda9255b48315168
+ */
 u_char* ReadName(unsigned char* reader,unsigned char* buffer,int* count)
 {
     unsigned char *name;
@@ -256,6 +293,9 @@ u_char* ReadName(unsigned char* reader,unsigned char* buffer,int* count)
     return name;
 }
 
+/*
+ * Converts constant to its name
+ */
 char *get_type_descriptor(unsigned short type) {
     switch(ntohs(type))
     {
@@ -274,10 +314,16 @@ char *get_type_descriptor(unsigned short type) {
     }
 }
 
+/*
+ * Returns "IN" string if DNS_class is IN, "not-IN" in other cases (but it should always return IN as we are in Internet, right?)
+ */
 char *get_class_string(unsigned short dns_class) {
     return ntohs(dns_class) == 1 ? "IN" : "not-IN";
 }
 
+/*
+ * Prints help :)
+ */
 void print_help()
 {
     printf("*********** Simple DNS resolver ***********\n"
@@ -299,6 +345,10 @@ void print_help()
     "      Authority section (0)\n"
     "      Additional section (0)\n");
 }
+
+/*
+ * Checks if server is IPv6, v4 or DN
+ */
 int check_server(char * server)
 {
     int ret;
@@ -318,17 +368,24 @@ int check_server(char * server)
     return ret;
 }
 
+/*
+* Function return string with that interface, which rceived the most packets
+ * Principle:
+ * - It gets all interfaces
+ * - Then it gets the number of received packets by current interface
+ * -- This information is first in ->ifa_data structure. But this structure is in another header file
+ *      and I do not want to include it, so I just "blindly" grab it.
+ * - At the end, it returns the name of that interface, which has the most received packets
+*/
 void get_interface_name(char *interface)
 {
-    /*
-     * Function return string with that interface, which rceived the most packets
-     */
+
     struct ifaddrs *ifaddrs;
 
     getifaddrs(&ifaddrs);
     struct ifaddrs *temp =ifaddrs;
     unsigned int max_rx_packets = 0;
-    unsigned int *current_rx_packets; //todo vypsat jak jsem na to prisel...
+    unsigned int *current_rx_packets;
     char temp_interface[16];
     for(int i = 0; i < (int)strlen(temp_interface); i++)
     {
@@ -364,6 +421,9 @@ void get_interface_name(char *interface)
 
 }
 
+/*
+ * Sets DNS header
+ */
 void set_DNS_header(Input_args input_args, DNS_header *dns)
 {
     dns->ID = htons(666);
@@ -381,6 +441,9 @@ void set_DNS_header(Input_args input_args, DNS_header *dns)
     dns->nscount = 0;
 }
 
+/*
+ * Returns Error string according to server error code
+ */
 char * server_error_message(int server_error)
 {
     switch(server_error)
@@ -400,6 +463,9 @@ char * server_error_message(int server_error)
     }
 }
 
+/*
+ * Sets socket address
+ */
 void set_socket_address(int family, in_addr_t addr, int port, struct sockaddr_in *sockaddr)
 {
     sockaddr->sin_family = family;
@@ -407,6 +473,9 @@ void set_socket_address(int family, in_addr_t addr, int port, struct sockaddr_in
     sockaddr->sin_port = port;
 }
 
+/*
+ * Performs DNS query to get DNS ip, if DNS server domain name was on the input.
+ */
 void ask_for_dns_ip(Input_args *input_args)
 {
     char *dst_addr = get_dst_addr();
@@ -453,12 +522,11 @@ void ask_for_dns_ip(Input_args *input_args)
         datagram[i] = '\0';
     }
 
-    setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,(char*)&timeout,sizeof(struct timeval));
+    setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,(char*)&timeout,sizeof(struct timeval)); //timeout
     if(recvfrom (sock,(char*)datagram , udp_packet_size , 0 , (struct sockaddr*)&where_to_send , (socklen_t*)&size) < 0)
     {
         process_error(ERR_SOCKET, strerror(errno));
     }
-
 
     dns = (DNS_header*)datagram;
 
@@ -507,9 +575,12 @@ void ask_for_dns_ip(Input_args *input_args)
 
 }
 
+/*
+ * Prints formatted DNS answer record
+ */
 void print_answer(DNS_Answer *record, int is_answer)
 {
-    printf("%s, %s, %s, %d, ", record->name, get_class_string(record->info->_class), get_type_descriptor(record->info->type), ntohl(record->info->ttl));
+    printf("%s, %s, %s, %u, ", record->name, get_type_descriptor(record->info->type),get_class_string(record->info->_class),  ntohl(record->info->ttl));
     unsigned short type = ntohs(record->info->type);
     if(is_answer)
     {
@@ -539,12 +610,9 @@ void print_answer(DNS_Answer *record, int is_answer)
 }
 
 /*
-    * TODO reverse principle:
-    * given ip(v4): 85.207.58.49
-    * convert to 49.58.207.85.in-addr.arpa. (add dots -> numbers)
-    * send with appropiate type (PTR (=12))
-    * when recving answer, change conversion - now converting as IP, which will not work.
-    */
+ * Prepares everyhting for reverse query - primarily converts address ip to proper type like:
+ * 123.456.78.90 -> 90.87.654.321.in-addr.arpa.
+ */
 void prepare_for_reverse(char *address) {
     char temp[strlen(address)+14];
     char *inet_arpa = ".in-addr.arpa\0";
@@ -783,12 +851,6 @@ int main(int argc, char** argv )
     {
         print_answer(&additionals[i], 1);
     }
-
-
-
     return 0;
 }
 
-//Co neumim a umet nebudu:
-//IPv6 v serveru
-//iterativní DNS

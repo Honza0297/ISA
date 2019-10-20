@@ -1,11 +1,15 @@
-//
-// Created by jaberan on 16/10/2019.
-//
+/*
+ * Header file containing structures for DNS resolver.
+ * @Author: Jan Beran
+ * @Date: 20-10-2019
+ */
 
 #ifndef ISA_STRUCTURES_H
 #define ISA_STRUCTURES_H
 
-
+/*
+ * Structure for input arguments
+ */
 typedef struct {
     char* server;
     char* address;
@@ -16,6 +20,10 @@ typedef struct {
     int help; // help :)
 } Input_args;
 
+/*
+ * Structure representing DNS header for setting and parsing.
+ * NOTE: Order matters
+ */
 typedef struct  { //order matters!!!!
     unsigned short ID; // unsigned short == :16
 
@@ -36,12 +44,18 @@ typedef struct  { //order matters!!!!
 
 } DNS_header;
 
+/*
+ * Structure for a DNS query (qname is separated)
+ */
 typedef struct {
-    //QNAME???
     unsigned short qtype;
     unsigned short qclass;
 } DNS_query;
 
+/*
+ * Structure for DNS received data info.
+ * Pragma directive is for proper alignment
+ */
 #pragma pack(push, 1)
 typedef struct {
     unsigned short type; //type of record in RDATA in "two octets" format 0x0001 = A, 0x0005 = CNAME and more
@@ -51,6 +65,10 @@ typedef struct {
 }DNS_R_DATA_INFO;
 #pragma pack(pop)
 
+/*
+ * Structure for DNS answer record
+ * Pragma directive is for proper alignment
+ */
 #pragma pack(push, 1)
 typedef struct {
     unsigned char *name;
@@ -58,4 +76,5 @@ typedef struct {
     unsigned char * response_data;
 } DNS_Answer;
 #pragma pack(pop)
+
 #endif //ISA_STRUCTURES_H

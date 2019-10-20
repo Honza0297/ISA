@@ -1,0 +1,15 @@
+# Projekt do predmetu ISA: DNS resolver
+Projekt slouzi k jednoduchemu dotazovani na DNS server a vypisu vysledku techto dotazovani. 
+Autor: Jan Beran (xberan43)
+
+#Soucasti odevzdani
+* main.c
+* structures.h
+* Makefile
+* README
+* dokumentace.pdf
+
+
+##Neimplementovane casti
+* -6 flag neboli AAA dotazovani
+* DNS server zadany jako IPv6 adresa
