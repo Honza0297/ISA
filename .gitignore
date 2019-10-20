@@ -2,10 +2,15 @@
 *
 
 # And here start to whitelist
-# markdown notes
+# markdown notes and readme
 !*.md
+!README
+
+#Doc
+!doc
 
 # Files:
 !CMakeLists.txt
 !*.c
 !*.h
+
