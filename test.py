@@ -22,6 +22,10 @@ good_inputs = [
 "-s kazi.fit.vutbr.cz www.zive.cz",
 "-s 8.8.8.8 www.fit.vutbr.cz -p 53",
 "-s kazi.fit.vutbr.cz 147.229.9.23 -x", # www.fit.vutbr.cz
+"-s 8.8.8.8 147.229.9.23 -x",
+"-s 8.8.8.8 www.fit.vutbr.cz -p 53 -r",
+"-s kazi.fit.vutbr.cz 147.229.9.23 -x -r", # www.fit.vutbr.cz
+
 ]
 err = False
 print(HEADER + "***Bad inputs, error is expected (white - stderr from program)***" + NC)
@@ -30,7 +34,6 @@ for bad in range(len(bad_inputs)):
     try:
         print(OKBLUE + program + " " +  bad_inputs[bad] + NC)
         cmd =[program] + bad_inputs[bad].split(" ")
-        #print(cmd)
         subprocess.check_output(cmd)
     except subprocess.CalledProcessError as e:
         err = True
@@ -45,11 +48,12 @@ for good in range(len(good_inputs)):
     try:
         print(OKBLUE + program +  " " + good_inputs[good]+ NC)
         cmd = [program] + good_inputs[good].split(" ")
-        subprocess.check_output(cmd)
+        out = subprocess.check_output(cmd)
     except subprocess.CalledProcessError as e:
         err = True
         print(FAIL + "ERR with args: " + good_inputs[good] + "\nReturn code was "+ str(e.returncode)+ NC)
     finally:
         if not err:
             print(OKGREEN + "OK" + NC)
+            print(out.decode('utf-8'))
             

@@ -1,7 +1,7 @@
 /*
  * Header file containing structures for DNS resolver.
  * @Author: Jan Beran
- * @Date: 20-10-2019
+ * @Date: 20-10-2019 to 11-11-2019
  */
 
 #ifndef ISA_STRUCTURES_H

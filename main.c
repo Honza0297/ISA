@@ -1,6 +1,7 @@
 /*
  * Simple DNS resolver
  * @Author: Jan Beran (xberan43)
+ * Note: some parts of this code are taken over, Everything is described in documentation
  */
 
 //Generic includes
@@ -19,6 +20,7 @@
 
 //Other
 #include <sys/time.h> // for timeout
+
 #include "structures.h"
 
 #define DEFAULT_PORT 53
@@ -41,6 +43,7 @@
 #define ERR_ARGS -1
 #define ERR_FILE -2
 #define ERR_SOCKET -3
+#define ERR_ARGS_COMB -4
 
 //DNS server return codes
 #define FORMAT_ERR 1
@@ -49,9 +52,9 @@
 #define RC_NOT_IMPLEMENTED 4
 #define REFUSED 5
 
+
 //timeout
 struct timeval timeout={1,0};
-
 
 /*
  * Simple function which process error
@@ -65,7 +68,7 @@ void process_error(int return_code, char * err_string)
 
 
 /*
- * Function gets input arguemnts, parse them and return them in Inpu_args structure
+ * Function gets input arguemnts, parse them and return them in Input_args structure
  */
 Input_args check_args(int argc, char** argv)
 {
@@ -349,7 +352,7 @@ void print_help()
 /*
  * Checks if server is IPv6, v4 or DN
  */
-int check_server(char * server)
+int check_if_ip(char * server)
 {
     int ret;
     char *fakebuffer[256];
@@ -369,13 +372,13 @@ int check_server(char * server)
 }
 
 /*
-* Function return string with that interface, which rceived the most packets
- * Principle:
- * - It gets all interfaces
- * - Then it gets the number of received packets by current interface
- * -- This information is first in ->ifa_data structure. But this structure is in another header file
- *      and I do not want to include it, so I just "blindly" grab it.
- * - At the end, it returns the name of that interface, which has the most received packets
+* Function return string with that interface, which received the most packets
+* Principle:
+* - It gets all interfaces
+* - Then it gets the number of received packets by current interface
+* -- This information is first in ->ifa_data structure. But this structure is in another header file
+*      and I do not want to include it only for this little thing, so I just "blindly" grab it (but I know what I am doing).
+* - At the end, it returns the name of that interface, which has the most received packets
 */
 void get_interface_name(char *interface)
 {
@@ -651,19 +654,141 @@ void prepare_for_reverse(char *address) {
     address[i] = '\0';
 }
 
+/*
+ * Function just gets data from datagram and then prints all answers
+ */
+void print_answers(const char *datagram, const DNS_header *dns, unsigned char **reader_head, int *relative_index) {
+    DNS_Answer answers;
+    printf("Answer Section (%d)\n" , ntohs(dns->ancount));
+    for(int i = 0; i < ntohs(dns->ancount); i++)
+    {
+        answers.name = ReadName((*reader_head), (unsigned char *)datagram, relative_index);
+        (*reader_head) += (*relative_index);
+
+        answers.info = (DNS_R_DATA_INFO *) (*reader_head);
+        (*reader_head) += sizeof(DNS_R_DATA_INFO);
+
+        int IP_type =  ntohs(answers.info->type);
+        int data_len = ntohs(answers.info->rdata_len);
+
+        if(IP_type == A)
+        {
+            answers.response_data = (unsigned char *)malloc(sizeof(unsigned  char) * data_len);
+            for(int j = 0; j < data_len; j++)
+            {
+                answers.response_data[j] = (*reader_head)[0];
+                (*reader_head)++;
+
+            }
+            answers.response_data[data_len] = '\0'; //correct ending
+
+        }
+        else //CNAME for example
+        {
+            answers.response_data = ReadName((*reader_head), (unsigned char *)datagram, relative_index);
+            (*reader_head) += (*relative_index);
+        }
+        print_answer(&answers, 1);
+    }
+}
+
+/*
+ * Function just gets data from datagram and then prints all authoritative answers
+ */
+void print_authoritatives(const char *datagram, const DNS_header *dns, unsigned char **reader_head, int *relative_index) {
+    DNS_Answer authoritatives[dns->nscount];
+    for(int i = 0; i < ntohs(dns->nscount); i++)
+    {
+        authoritatives[i].name = ReadName((*reader_head), (unsigned char *)datagram, relative_index);
+        (*reader_head) += (*relative_index);
+
+        authoritatives[i].info = (DNS_R_DATA_INFO *) (*reader_head);
+        (*reader_head) += sizeof(DNS_R_DATA_INFO);
+
+        authoritatives[i].response_data = ReadName((*reader_head), (unsigned char *)datagram, relative_index);
+        (*reader_head) += (*relative_index);
+    }
+    //print authorities
+    printf("Authoritive Records (%d):\n" , ntohs(dns->nscount));
+    for( int i=0 ; i < ntohs(dns->nscount) ; i++)
+    {
+        print_answer(&authoritatives[i], 1);
+    }
+}
+
+/*
+ * Function just gets data from datagram and then prints all additional answers
+ */
+void print_additionals(const char *datagram, const DNS_header *dns, unsigned char *reader_head, int *relative_index) {
+    DNS_Answer additionals[dns->addcount];
+    for(int i = 0; i < ntohs(dns->addcount); i++)
+    {
+       additionals[i].name = ReadName(reader_head, (unsigned char *)datagram, relative_index);
+       reader_head += (*relative_index);
+
+        additionals[i].info = (DNS_R_DATA_INFO *) reader_head;
+        reader_head += sizeof(DNS_R_DATA_INFO);
+
+        int response_type =  ntohs(additionals[i].info->type);
+        int data_len = ntohs(additionals[i].info->rdata_len);
+
+        if(response_type == A || response_type == AAAA)
+        {
+            additionals[i].response_data = (unsigned char *)malloc(data_len);
+            for(int j = 0; j < data_len; j++)
+            {
+                additionals[i].response_data[j] = reader_head[0];
+                reader_head++;
+            }
+
+           additionals[i].response_data[data_len] = '\0'; //correct ending
+        }
+        else //CNAME for example
+        {
+            additionals[i].response_data = ReadName(reader_head, (unsigned char *)datagram, relative_index);
+            reader_head += (*relative_index);
+        }
+    }
+    //print additional resource records
+    printf("Additional Records (%d):\n" , ntohs(dns->addcount));
+    for( int i=0; i < ntohs(dns->addcount) ; i++)
+    {
+        print_answer(&additionals[i], 1);
+    }
+}
+
+void print_question(const DNS_header *dns, const unsigned char *qname, const DNS_query *received_question) {
+    printf("Question section (%d):\n", ntohs(dns->qcount));
+    for(int i = 0; i < ntohs(dns->qcount);i++)
+    {
+        unsigned char* qname_without_numbers = (unsigned char*)malloc(sizeof(unsigned char) * strlen((const char *)qname));
+
+        remove_numbers_from_hostname(qname, qname_without_numbers);
+        printf("%s, %s, %s\n", qname_without_numbers, get_class_string(received_question->qclass), get_type_descriptor(received_question->qtype));
+    }
+}
+
 int main(int argc, char** argv )
 {
 
     //Get input arguments and maybe help the user
     Input_args input_args = check_args(argc,argv);
+
     if(input_args.help)
     {
         print_help();
         return 0;
     }
 
+
+    int address_type = check_if_ip(input_args.address);
+    if(address_type == NOT_AN_IP && input_args.reverse)
+    {
+        process_error(ERR_ARGS_COMB, "Coombination of parameters is not allowed!");
+    }
+
     //Prepare IP of server where we will send query
-    if(check_server(input_args.server) == NOT_AN_IP)
+    if(check_if_ip(input_args.server) == NOT_AN_IP)
     {
         ask_for_dns_ip(&input_args);
     }
@@ -692,15 +817,17 @@ int main(int argc, char** argv )
     memset (datagram, 0, udp_packet_size);
 
     //Set socket
-    int sock = socket(AF_INET, SOCK_DGRAM , IPPROTO_UDP);
+    int sock = socket(check_if_ip(input_args.server) == IPv4 ? AF_INET : AF_INET6, SOCK_DGRAM , IPPROTO_UDP);
     if(sock < 0)
     {
         process_error(ERR_SOCKET, strerror(errno));
     }
 
+    //Prepare destination
     struct sockaddr_in where_to_send;
-    set_socket_address(AF_INET, inet_addr(dst_addr),htons(input_args.port), &where_to_send);
+    set_socket_address(check_if_ip(input_args.server) == IPv4 ? AF_INET : AF_INET6, inet_addr(dst_addr),htons(input_args.port), &where_to_send);
 
+    //set DNS header
     DNS_header *dns = (DNS_header *)&datagram;
     set_DNS_header(input_args, dns);
 
@@ -708,7 +835,7 @@ int main(int argc, char** argv )
     unsigned char *qname = (unsigned char *)&datagram[sizeof(DNS_header)];
     add_numbers_to_hostname((unsigned char*)input_args.address, qname);
     DNS_query *query = (DNS_query *) &datagram[sizeof(DNS_header)+(strlen((const  char *)qname) +1)];
-    query->qtype = input_args.reverse ? htons(PTR): htons(A); // TODO AAA type
+    query->qtype = input_args.reverse ? htons(PTR): htons(A); // TODO AAAA type
     query->qclass = htons(1); // 1 means "internet". Just do it.
 
     //And send it ^_^
@@ -717,7 +844,7 @@ int main(int argc, char** argv )
         process_error(ERR_SOCKET, strerror(errno));
     }
 
-
+    /*******RECEIVING******/
 
     //Clear buffer before recv
     for(int i = 0; i < udp_packet_size; i++)
@@ -750,107 +877,14 @@ int main(int argc, char** argv )
     DNS_query *received_question = (DNS_query *)reader_head;
 
 
-    //SECTION printing question info
-    printf("Question section (%d):\n", ntohs(dns->qcount));
-    for(int i = 0; i < ntohs(dns->qcount);i++)
-    {
-        unsigned char* qname_without_numbers = (unsigned char*)malloc(sizeof(unsigned char) * strlen((const char *)qname));
-
-        remove_numbers_from_hostname(qname, qname_without_numbers);
-        printf("%s, %s, %s\n", qname_without_numbers, get_class_string(received_question->qclass), get_type_descriptor(received_question->qtype));
-    }
+    // printing question info
+    print_question(dns, qname, received_question);
     reader_head += + sizeof(DNS_query);
 
-    DNS_Answer answers;
+    //print all types of answers
     int relative_index = 0; //relative index into reader head;
-    printf("Answer Section (%d)\n" , ntohs(dns->ancount));
-    for(int i = 0; i < ntohs(dns->ancount); i++)
-    {
-        answers.name = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
-        reader_head += relative_index;
-
-        answers.info = (DNS_R_DATA_INFO *) reader_head;
-        reader_head += sizeof(DNS_R_DATA_INFO);
-
-        int IP_type =  ntohs(answers.info->type);
-        int data_len = ntohs(answers.info->rdata_len);
-
-        if(IP_type == A)
-        {
-            answers.response_data = (unsigned char *)malloc(sizeof(unsigned  char) * data_len);
-            for(int j = 0; j < data_len; j++)
-            {
-                answers.response_data[j] = reader_head[0];
-                reader_head++;
-
-            }
-            answers.response_data[data_len] = '\0'; //correct ending
-
-        }
-        else //CNAME for example
-        {
-           answers.response_data = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
-           reader_head +=relative_index;
-        }
-        print_answer(&answers, 1);
-    }
-
-
-    DNS_Answer authoritatives[dns->nscount];
-    for(int i = 0; i < ntohs(dns->nscount); i++)
-    {
-        authoritatives[i].name = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
-        reader_head +=relative_index;
-
-        authoritatives[i].info = (DNS_R_DATA_INFO *) reader_head;
-        reader_head += sizeof(DNS_R_DATA_INFO);
-
-        authoritatives[i].response_data = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
-        reader_head +=relative_index;
-    }
-    //print authorities
-    printf("Authoritive Records (%d):\n" , ntohs(dns->nscount));
-    for( int i=0 ; i < ntohs(dns->nscount) ; i++)
-    {
-        print_answer(&authoritatives[i], 1);
-    }
-
-
-    DNS_Answer additionals[dns->addcount];
-    for(int i = 0; i < ntohs(dns->addcount); i++)
-    {
-       additionals[i].name = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
-       reader_head +=relative_index;
-
-        additionals[i].info = (DNS_R_DATA_INFO *) reader_head;
-        reader_head += sizeof(DNS_R_DATA_INFO);
-
-        int response_type =  ntohs(additionals[i].info->type);
-        int data_len = ntohs(additionals[i].info->rdata_len);
-
-        if(response_type == A || response_type == AAAA)
-        {
-            additionals[i].response_data = (unsigned char *)malloc(data_len);
-            for(int j = 0; j < data_len; j++)
-            {
-                additionals[i].response_data[j] = reader_head[0];
-                reader_head++;
-            }
-
-           additionals[i].response_data[data_len] = '\0'; //correct ending
-        }
-        else //CNAME for example
-        {
-            additionals[i].response_data = ReadName(reader_head,(unsigned char *)datagram,&relative_index);
-            reader_head +=relative_index;
-        }
-    }
-        //print additional resource records
-    printf("Additional Records (%d):\n" , ntohs(dns->addcount));
-    for( int i=0; i < ntohs(dns->addcount) ; i++)
-    {
-        print_answer(&additionals[i], 1);
-    }
+    print_answers(datagram, dns, &reader_head, &relative_index);
+    print_authoritatives(datagram, dns, &reader_head, &relative_index);
+    print_additionals(datagram, dns, reader_head, &relative_index);
     return 0;
 }
-
